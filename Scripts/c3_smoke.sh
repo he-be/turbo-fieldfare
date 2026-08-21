@@ -789,10 +789,12 @@ check_gen8() {
 # (遅延文法。常用クライアントの形)、(c) `tool_choice: required` (非遅延。最初の
 # トークンから拘束がかかる形)。
 #
-# **どれも思考 OFF で投げる。**思考 ON かつ `max_tokens` 指定の要求は RSN-4 の
-# 終了タグ強制が働きうるので、SPEC §12 **DEV-14** によって plain 経路に落ちる —
-# それは GEN-14 の話ではない。思考 ON でも `max_tokens` と
-# `reasoning_budget_tokens` の両方が無制限なら投機経路に入る。
+# **どれも思考 OFF で投げる。**思考 ON の要求で締切が立つと RSN-4 の終了タグ
+# 強制が働きうるので、SPEC §12 **DEV-14** によって plain 経路に落ちる — それは
+# GEN-14 の話ではない。ただし締切が立つのは **`max_tokens` が文脈の残りより
+# 実際に短いとき**だけである (RSN-4、P7)。ここで `max_tokens: 128` を指定して
+# いるのはまさにその形なので、思考 OFF にしておかないと GEN-14 ではなく
+# DEV-14 を測ってしまう。
 check_gen14() {
     begin GEN-14 "tools を宣言した要求でも投機が走る (timings.draft_n > 0)"
     local prompt='Name three prime numbers larger than one hundred and say why each is prime.'
@@ -807,7 +809,7 @@ check_gen14() {
     post "$RUN_DIR/gen14a.req.json" gen14a || { finish; return; }
     expect_status 200 || { finish; return; }
     if ! jq -e '.timings.draft_n? // empty | . > 0' "$LAST_BODY" >/dev/null 2>&1; then
-        skip "tools 無しの要求でも draft_n が無い — サーバーが --draft-block-size 0 で建っているか、ドラフターの入っていないバンドルを積んでいる。GEN-14 はここでは判定できない"
+        skip "tools 無しの要求にも timings.draft_n が無い。原因は 3 つのどれか — (1) **サーバーのバイナリが P6 より前** (ログに mtp= は出るのに draft_n が無いならこれ。swift build -c release --product TurboFieldfareServer で建て直す)、(2) --draft-block-size 0 で建っている、(3) ドラフターの入っていないバンドル。GEN-14 はここでは判定できない"
         finish
         return
     fi
