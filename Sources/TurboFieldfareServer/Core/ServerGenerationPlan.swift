@@ -164,12 +164,18 @@ struct ServerReasoningPlan: Equatable, Sendable {
     ///   - defaultFormat: `--reasoning-format` (RSN-3).
     ///   - maxNewTokens: the completion budget the session resolved — the
     ///     request's `max_tokens` already clamped to what the context has left.
+    ///   - contextRemaining: what the context had left after the prompt, i.e.
+    ///     the ceiling `maxNewTokens` was clamped to. **P7 未実装** (RSN-4).
     ///   - forcedTokenCount: how many tokens the forced sequence spends.
     init(request: ValidatedChatRequest,
          defaultBudget: Int,
          defaultFormat: ReasoningFormat,
          maxNewTokens: Int,
+         contextRemaining: Int,
          forcedTokenCount: Int) {
+        // P7 未実装: RSN-4 は「文脈の残り以上の `max_tokens` は締切を作らない」
+        // と言うが、下の `deadline` はまだ綴りだけを見ている。
+        _ = contextRemaining
         // RSN-1 / RSN-2. The channel is already resolved: `ChatRequestParser`
         // walked the reference's four steps, with the process default (which
         // is `--reasoning-budget != 0`) as their base.

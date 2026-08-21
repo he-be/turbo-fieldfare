@@ -369,10 +369,14 @@ struct ServerReasoningRequestTests {
 /// arithmetic of RSN-4 and the routing of RSN-3, both without a model.
 @Suite("Server reasoning plan")
 struct ServerReasoningPlanTests {
+    /// `contextRemaining` defaults to something far above any `maxNewTokens`
+    /// these tests use, so a case that does not name it is one where the
+    /// client's `max_tokens` — not the context — is the binding number.
     private func plan(_ body: String,
                       defaultBudget: Int = -1,
                       defaultFormat: ReasoningFormat = .auto,
                       maxNewTokens: Int,
+                      contextRemaining: Int = 1_000_000,
                       thinking: ServerThinkingPolicy = .on) throws -> ServerReasoningPlan {
         let request = try ChatRequestParser.parse(
             Data(body.utf8), defaults: ChatRequestDefaults(thinking: thinking))
@@ -380,6 +384,7 @@ struct ServerReasoningPlanTests {
                                    defaultBudget: defaultBudget,
                                    defaultFormat: defaultFormat,
                                    maxNewTokens: maxNewTokens,
+                                   contextRemaining: contextRemaining,
                                    forcedTokenCount: 1)
     }
 
@@ -427,6 +432,63 @@ struct ServerReasoningPlanTests {
         #expect(unbounded.deadline == Int.max)
         #expect(!unbounded.forcesClosingTag)
         #expect(unbounded.allowsSpeculativeDecoding)
+    }
+
+    /// RSN-4's own sentence, read off the **effective** limit rather than off
+    /// the spelling: "コンテキストの上限はクライアントが選んだ予算ではない".
+    ///
+    /// A client that echoes the model's capability — pi puts `models.json`'s
+    /// `maxTokens`, the same number as `context_window`, on every request —
+    /// sends a `max_tokens` that `min(max_tokens, 文脈の残り)` collapses onto
+    /// the context remainder. That request generates token for token what
+    /// `max_tokens: -1` would generate, so the only thing that may not differ
+    /// is whether it has a deadline.
+    ///
+    /// The numbers are the 2026-08-21 measurement (CONFORMANCE §2): a 65536
+    /// context, a prompt of 8889, an answer of 1293 tokens, and a deadline
+    /// 42485 tokens away that could never fire — yet cost the request its
+    /// speculative decoding through DEV-14.
+    @Test func RSN_4_a_max_tokens_at_the_context_ceiling_sets_no_deadline() throws {
+        let remaining = 65_536 - 8_889
+        let capability = try plan(#"""
+        {"model":"m","messages":[{"role":"user","content":"hi"}],
+         "chat_template_kwargs":{"enable_thinking":true},"max_tokens":65536}
+        """#, maxNewTokens: min(65_536, remaining), contextRemaining: remaining)
+
+        #expect(capability.deadline == Int.max)
+        #expect(!capability.forcesClosingTag)
+        // The whole point: this is what pi's default session needs (GEN-14 gave
+        // it the grammar half; this is the reasoning half).
+        #expect(capability.allowsSpeculativeDecoding)
+
+        // Token for token the same request as `max_tokens: -1`, so token for
+        // token the same plan.
+        let unlimited = try plan(#"""
+        {"model":"m","messages":[{"role":"user","content":"hi"}],
+         "chat_template_kwargs":{"enable_thinking":true},"max_tokens":-1}
+        """#, maxNewTokens: remaining, contextRemaining: remaining)
+        #expect(capability == unlimited)
+    }
+
+    /// The boundary. Exactly at the ceiling the context is what binds, so no
+    /// deadline; one token below it the client's number binds and there is one.
+    @Test func RSN_4_the_deadline_appears_only_below_the_context_ceiling() throws {
+        let remaining = 4_096
+        func planned(_ maxTokens: Int) throws -> ServerReasoningPlan {
+            try plan(#"""
+            {"model":"m","messages":[{"role":"user","content":"hi"}],
+             "chat_template_kwargs":{"enable_thinking":true},"max_tokens":\#(maxTokens)}
+            """#, maxNewTokens: min(maxTokens, remaining), contextRemaining: remaining)
+        }
+        #expect(try planned(remaining + 1).deadline == Int.max)
+        #expect(try planned(remaining).deadline == Int.max)
+
+        let bound = try planned(remaining - 1)
+        let effective = remaining - 1
+        #expect(bound.deadline
+                == effective - ServerReasoningPlan.answerReserve(maxNewTokens: effective) - 1)
+        #expect(bound.forcesClosingTag)
+        #expect(!bound.allowsSpeculativeDecoding)
     }
 
     /// A closed thought channel cannot overrun a budget, so it never carries a

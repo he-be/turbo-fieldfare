@@ -784,6 +784,7 @@ public actor ServerModelSession: ServerInferenceBackend {
                                             defaultBudget: reasoningBudget,
                                             defaultFormat: reasoningFormat,
                                             maxNewTokens: config.maxNewTokens,
+                                            contextRemaining: contextRemaining,
                                             forcedTokenCount: forcedReasoningEnd.count)
         let forcer = reasoning.forcesClosingTag
             ? ReasoningBudgetForcer(startTokenID: tokenizer.channelStartID,

@@ -164,7 +164,7 @@
 | RSN-1 | プロセス既定は `--reasoning-budget N` (**-1 = 無制限 (既定)、0 = 無効**)。独自フラグ `--thinking on\|off` は廃止 (FLAG-4)。 |
 | RSN-2 | 要求ごとの制御は `reasoning_effort` (REQ-reasoning-effort) と `chat_template_kwargs.enable_thinking`。参照実装と同じく両方受け、食い違いを 400 にしない。解決順は参照実装 (`server-common.cpp:1278-1304`) と同じ: `enable_thinking` があればそれ、無ければ `reasoning_effort` の有無 (`none` 以外 = 思考する)、最後に `reasoning_effort: "none"` と予算 0 が上書きして閉じる。 |
 | RSN-3 | 思考は `reasoning_content` に分離して返す (`--reasoning-format auto`、既定)。`--reasoning-format none` で生テキストのまま返す。 |
-| RSN-4 | **思考の予算が尽きたら終了タグを強制挿入して本文へ移らせる** (参照実装 `reasoning_budget_forced`)。予算 = `reasoning_budget_tokens`、および `max_tokens` の残り。**`max_tokens` の分け方は DEV-21** (答えの分を先に取り置く)。`max_tokens: -1` (無制限) は締切を作らない — 無制限は無制限であり、コンテキストの上限はクライアントが選んだ予算ではない。`finish_reason: length` で本文 0 字・思考だけの応答を返さない (旧 16 §5 で実測済みの欠陥)。 |
+| RSN-4 | **思考の予算が尽きたら終了タグを強制挿入して本文へ移らせる** (参照実装 `reasoning_budget_forced`)。予算 = `reasoning_budget_tokens`、および `max_tokens` の残り。**`max_tokens` の分け方は DEV-21** (答えの分を先に取り置く)。`max_tokens: -1` (無制限) は締切を作らない — 無制限は無制限であり、コンテキストの上限はクライアントが選んだ予算ではない。**同じ理由で、`max_tokens` が文脈の残り以上の要求も締切を作らない。**実効の生成上限は `min(max_tokens, 文脈の残り)` であり、これが文脈の残りに等しい要求は `-1` を送った要求と 1 トークンも違う生成をしない。違うのは綴りだけなので、締切の有無が変わってはいけない。**締切を作るのは、クライアントの `max_tokens` が文脈の残りより実際に短いときだけである。**この区別は性能に直結する — 締切を持つ要求は DEV-14 により投機デコードを落とすので、能力値をそのまま載せてくるクライアント (pi の `models.json` の `maxTokens` は `context_window` と同じ数) が、発火しえない締切と引き換えに MTP を丸ごと失う (実測 2026-08-21: 締切が実際の生成の 33 倍先にあるのに plain 経路へ落ちた)。`finish_reason: length` で本文 0 字・思考だけの応答を返さない (旧 16 §5 で実測済みの欠陥)。 |
 | RSN-5 | tools 宣言時も思考は有効 (MSG-6)。 |
 | RSN-6 | **予算はチャンネルが開いた時点で動き出す。**このテンプレートは `strip_thinking` がチャンネルブロックを一律に思考として扱うので、ラベルを見ずに `<\|channel>` で武装してよい。`final` などのラベル付きブロックが出てくるようになったら、ここを読み直す。 |
 
