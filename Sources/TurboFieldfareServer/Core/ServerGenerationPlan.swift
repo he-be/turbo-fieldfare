@@ -165,7 +165,9 @@ struct ServerReasoningPlan: Equatable, Sendable {
     ///   - maxNewTokens: the completion budget the session resolved — the
     ///     request's `max_tokens` already clamped to what the context has left.
     ///   - contextRemaining: what the context had left after the prompt, i.e.
-    ///     the ceiling `maxNewTokens` was clamped to. **P7 未実装** (RSN-4).
+    ///     the ceiling `maxNewTokens` was clamped to. RSN-4's second half is
+    ///     decided by comparing the two: a request whose `max_tokens` did not
+    ///     bind is a request with no client-chosen budget.
     ///   - forcedTokenCount: how many tokens the forced sequence spends.
     init(request: ValidatedChatRequest,
          defaultBudget: Int,
@@ -173,9 +175,6 @@ struct ServerReasoningPlan: Equatable, Sendable {
          maxNewTokens: Int,
          contextRemaining: Int,
          forcedTokenCount: Int) {
-        // P7 未実装: RSN-4 は「文脈の残り以上の `max_tokens` は締切を作らない」
-        // と言うが、下の `deadline` はまだ綴りだけを見ている。
-        _ = contextRemaining
         // RSN-1 / RSN-2. The channel is already resolved: `ChatRequestParser`
         // walked the reference's four steps, with the process default (which
         // is `--reasoning-budget != 0`) as their base.
@@ -194,9 +193,24 @@ struct ServerReasoningPlan: Equatable, Sendable {
             : request.reasoningBudgetTokens
         // RSN-4, second half. A `max_tokens` the client named bounds the block
         // even when no budget did: the tag has to start early enough to leave
-        // the answer its reserve. `max_tokens: -1` asked for no bound, so it
-        // sets none — the context ceiling is not a budget the client chose.
-        self.deadline = request.maximumCompletionTokens > 0
+        // the answer its reserve.
+        //
+        // The test is whether that number actually **bound** anything, not
+        // whether it was written down. `maxNewTokens` is
+        // `min(max_tokens, contextRemaining)` (`max_tokens: -1` resolving to
+        // the whole remainder), so the client's number bound the request
+        // exactly when the result came out below the ceiling. When it did not,
+        // this request generates token for token what `max_tokens: -1` would,
+        // and RSN-4's own sentence applies to it unchanged: the context ceiling
+        // is not a budget the client chose.
+        //
+        // Reading the spelling instead of the effective value is what cost pi's
+        // thinking sessions their speculative decoding — it sends
+        // `models.json`'s `maxTokens`, the same number as `context_window`, so
+        // every request carried a deadline tens of thousands of tokens past any
+        // answer it would write, and DEV-14 dropped every one of them onto the
+        // plain path (CONFORMANCE §2, 2026-08-21).
+        self.deadline = maxNewTokens < contextRemaining
             ? maxNewTokens - Self.answerReserve(maxNewTokens: maxNewTokens) - forcedTokenCount
             : Int.max
     }

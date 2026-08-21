@@ -369,14 +369,16 @@ struct ServerReasoningRequestTests {
 /// arithmetic of RSN-4 and the routing of RSN-3, both without a model.
 @Suite("Server reasoning plan")
 struct ServerReasoningPlanTests {
-    /// `contextRemaining` defaults to something far above any `maxNewTokens`
-    /// these tests use, so a case that does not name it is one where the
-    /// client's `max_tokens` — not the context — is the binding number.
+    /// **`contextRemaining` has no default on purpose.** RSN-4's second half
+    /// turns on which of the two numbers bound the request, so a test that did
+    /// not say what the context had left would not be saying what it is
+    /// testing. `maxNewTokens` is always `min(max_tokens, contextRemaining)`,
+    /// the way `ServerModelSession` computes it.
     private func plan(_ body: String,
                       defaultBudget: Int = -1,
                       defaultFormat: ReasoningFormat = .auto,
                       maxNewTokens: Int,
-                      contextRemaining: Int = 1_000_000,
+                      contextRemaining: Int,
                       thinking: ServerThinkingPolicy = .on) throws -> ServerReasoningPlan {
         let request = try ChatRequestParser.parse(
             Data(body.utf8), defaults: ChatRequestDefaults(thinking: thinking))
@@ -397,12 +399,14 @@ struct ServerReasoningPlanTests {
     /// falls back to. `-1` in the request means "whatever the server was
     /// started with", exactly as in the reference (`server-common.cpp:1340`).
     @Test func RSN_4_the_request_budget_falls_back_to_the_process_default() throws {
-        #expect(try plan(thinkingRequest, defaultBudget: 128, maxNewTokens: -1).budget == 128)
+        #expect(try plan(thinkingRequest, defaultBudget: 128,
+                         maxNewTokens: 4_096, contextRemaining: 4_096).budget == 128)
         #expect(try plan(#"""
         {"model":"m","messages":[{"role":"user","content":"hi"}],
          "chat_template_kwargs":{"enable_thinking":true},"reasoning_budget_tokens":24}
-        """#, defaultBudget: 128, maxNewTokens: -1).budget == 24)
-        #expect(try plan(thinkingRequest, defaultBudget: -1, maxNewTokens: -1).budget == -1)
+        """#, defaultBudget: 128, maxNewTokens: 4_096, contextRemaining: 4_096).budget == 24)
+        #expect(try plan(thinkingRequest, defaultBudget: -1,
+                         maxNewTokens: 4_096, contextRemaining: 4_096).budget == -1)
     }
 
     /// RSN-4, second half: `max_tokens` bounds the thought block even when no
@@ -413,7 +417,7 @@ struct ServerReasoningPlanTests {
         let measured = try plan(#"""
         {"model":"m","messages":[{"role":"user","content":"hi"}],
          "chat_template_kwargs":{"enable_thinking":true},"max_tokens":80}
-        """#, maxNewTokens: 80)
+        """#, maxNewTokens: 80, contextRemaining: 4_096)
         #expect(measured.budget == -1)
         #expect(measured.deadline == 80 - ServerReasoningPlan.answerReserve(maxNewTokens: 80) - 1)
         #expect(measured.deadline == 59)
@@ -427,7 +431,8 @@ struct ServerReasoningPlanTests {
     /// which is what "無制限" means — and speculative decoding stays available
     /// for pi's default session (tools + 画像 + Reasoning + MTP).
     @Test func RSN_4_an_unbounded_request_forces_nothing() throws {
-        let unbounded = try plan(thinkingRequest, maxNewTokens: 4_096)
+        let unbounded = try plan(thinkingRequest, maxNewTokens: 4_096,
+                                 contextRemaining: 4_096)
         #expect(unbounded.budget == -1)
         #expect(unbounded.deadline == Int.max)
         #expect(!unbounded.forcesClosingTag)
@@ -496,7 +501,7 @@ struct ServerReasoningPlanTests {
     @Test func RSN_4_a_closed_channel_forces_nothing() throws {
         let off = try plan(#"""
         {"model":"m","messages":[{"role":"user","content":"hi"}],"max_tokens":80}
-        """#, maxNewTokens: 80, thinking: .off)
+        """#, maxNewTokens: 80, contextRemaining: 4_096, thinking: .off)
         #expect(!off.isThinking)
         #expect(!off.forcesClosingTag)
 
@@ -504,7 +509,7 @@ struct ServerReasoningPlanTests {
         {"model":"m","messages":[{"role":"user","content":"hi"}],
          "chat_template_kwargs":{"enable_thinking":true},
          "reasoning_budget_tokens":0,"max_tokens":80}
-        """#, maxNewTokens: 80)
+        """#, maxNewTokens: 80, contextRemaining: 4_096)
         #expect(!zeroBudget.isThinking)
         #expect(!zeroBudget.forcesClosingTag)
     }
@@ -514,13 +519,14 @@ struct ServerReasoningPlanTests {
     /// side may ask for `none`: the flag sets the process default, and the
     /// request field is REQ-reasoning-format.
     @Test func RSN_3_the_reasoning_format_decides_where_the_thought_goes() throws {
-        let auto = try plan(thinkingRequest, maxNewTokens: 64)
+        let auto = try plan(thinkingRequest, maxNewTokens: 64, contextRemaining: 4_096)
         #expect(auto.format == .auto)
         #expect(auto.separatesReasoning)
         #expect(auto.route(.reasoning("weighing")) == .reasoning("weighing"))
         #expect(auto.route(.content("hello")) == .content("hello"))
 
-        let byFlag = try plan(thinkingRequest, defaultFormat: .none, maxNewTokens: 64)
+        let byFlag = try plan(thinkingRequest, defaultFormat: .none,
+                              maxNewTokens: 64, contextRemaining: 4_096)
         #expect(byFlag.format == .none)
         #expect(!byFlag.separatesReasoning)
         #expect(byFlag.route(.reasoning("weighing")) == .content("weighing"))
@@ -528,7 +534,7 @@ struct ServerReasoningPlanTests {
         let byRequest = try plan(#"""
         {"model":"m","messages":[{"role":"user","content":"hi"}],
          "chat_template_kwargs":{"enable_thinking":true},"reasoning_format":"none"}
-        """#, maxNewTokens: 64)
+        """#, maxNewTokens: 64, contextRemaining: 4_096)
         #expect(byRequest.format == .none)
         #expect(byRequest.route(.reasoning("weighing")) == .content("weighing"))
     }
